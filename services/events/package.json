@@ -1,0 +1,12 @@
+{
+  "name": "cloudcrafter-events",
+  "version": "1.0.0",
+  "description": "CloudCrafter Events service — lists and creates events.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

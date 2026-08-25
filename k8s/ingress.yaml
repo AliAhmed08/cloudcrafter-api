@@ -1,0 +1,40 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cloudcrafter-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: cloudcrafter.local
+      http:
+        paths:
+          - path: /api/users(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: users
+                port:
+                  number: 3000
+          - path: /api/events(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: events
+                port:
+                  number: 3000
+          - path: /api/tickets(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: tickets
+                port:
+                  number: 3000
+          - path: /api/notifications(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: notifications
+                port:
+                  number: 3000

@@ -1,0 +1,12 @@
+{
+  "name": "cloudcrafter-tickets",
+  "version": "1.0.0",
+  "description": "CloudCrafter Tickets service — books tickets and issues receipts.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
