@@ -1,3 +1,11 @@
 node_modules/
 package-lock.json
 .DS_Store
+
+# JWT signing key material — never commit private/public keys.
+# In-cluster, keys come from a Kubernetes Secret (see k8s/users-deployment.yaml
+# and README.md "JWT keys" section). For local (non-container) dev, generate
+# your own pair into services/users/keys/.
+services/users/keys/
+*.key
+*.pem

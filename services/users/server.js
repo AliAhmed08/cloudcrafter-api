@@ -7,8 +7,28 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const PRIVATE_KEY = fs.readFileSync(path.join(__dirname, "private.key"), "utf8");
-const PUBLIC_KEY = fs.readFileSync(path.join(__dirname, "public.key"), "utf8");
+
+// In Kubernetes, JWT_KEYS_DIR points at a mounted Secret volume (see k8s/users-deployment.yaml).
+// For local (non-container) development without a cluster, it falls back to a directory
+// named by JWT_KEYS_DIR or, failing that, to ./keys (which is gitignored — see .gitignore).
+// The keys are never read from a path inside the committed source tree.
+const KEYS_DIR = process.env.JWT_KEYS_DIR || path.join(__dirname, "keys");
+
+function readKey(fileName) {
+  const keyPath = path.join(KEYS_DIR, fileName);
+  try {
+    return fs.readFileSync(keyPath, "utf8");
+  } catch (err) {
+    throw new Error(
+      `Unable to read ${fileName} from ${KEYS_DIR}. Set JWT_KEYS_DIR to a directory containing ` +
+      `private.key and public.key (mounted from a Kubernetes Secret in-cluster, or a local ` +
+      `gitignored directory for standalone dev). Original error: ${err.message}`
+    );
+  }
+}
+
+const PRIVATE_KEY = readKey("private.key");
+const PUBLIC_KEY = readKey("public.key");
 
 // Demo user store — CloudCrafter is a learning project, this is intentionally in-memory.
 const USERS = [

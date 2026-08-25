@@ -1,0 +1,9 @@
+{
+  "name": "cloudcrafter-notify-on-receipt",
+  "version": "1.0.0",
+  "description": "CloudCrafter Task 1 Lambda — triggered by S3 ticket-receipt uploads, calls the Notifications service.",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.600.0"
+  }
+}
