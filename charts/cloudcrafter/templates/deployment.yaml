@@ -1,0 +1,93 @@
+{{- range $name, $svc := .Values.services }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cloudcrafter.serviceFullname" (dict "name" $name) }}
+  {{- with (include "cloudcrafter.namespace" $) }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "cloudcrafter.selectorLabels" (dict "name" $name) | nindent 4 }}
+    {{- include "cloudcrafter.labels" $ | nindent 4 }}
+spec:
+  replicas: {{ $svc.replicas }}
+  selector:
+    matchLabels:
+      {{- include "cloudcrafter.selectorLabels" (dict "name" $name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cloudcrafter.selectorLabels" (dict "name" $name) | nindent 8 }}
+    spec:
+      containers:
+        - name: {{ $name }}
+          image: "{{ $svc.image.repository }}:{{ $svc.image.tag }}"
+          imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          ports:
+            - containerPort: {{ $svc.containerPort }}
+          {{- if or $svc.jwtSecretMount $svc.s3Env $svc.extraEnv }}
+          env:
+            {{- if $svc.jwtSecretMount }}
+            - name: JWT_KEYS_DIR
+              value: {{ $.Values.jwt.mountPath | quote }}
+            {{- end }}
+            {{- if $svc.s3Env }}
+            - name: S3_ENDPOINT
+              value: {{ $.Values.s3.endpoint | quote }}
+            - name: S3_BUCKET
+              value: {{ $.Values.s3.bucket | quote }}
+            - name: S3_REGION
+              value: {{ $.Values.s3.region | quote }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cloudcrafter.serviceFullname" (dict "name" "tickets") }}-s3-credentials
+                  key: accessKeyId
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cloudcrafter.serviceFullname" (dict "name" "tickets") }}-s3-credentials
+                  key: secretAccessKey
+            {{- end }}
+            {{- range $svc.extraEnv }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+          {{- end }}
+          {{- if $svc.jwtSecretMount }}
+          volumeMounts:
+            - name: jwt-keys
+              mountPath: {{ $.Values.jwt.mountPath }}
+              readOnly: true
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ $svc.probes.path }}
+              port: {{ $svc.containerPort }}
+            initialDelaySeconds: {{ $svc.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ $svc.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ $svc.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ $svc.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ $svc.probes.path }}
+              port: {{ $svc.containerPort }}
+            initialDelaySeconds: {{ $svc.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ $svc.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ $svc.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ $svc.probes.readiness.failureThreshold }}
+          resources:
+            {{- toYaml $svc.resources | nindent 12 }}
+      {{- if $svc.jwtSecretMount }}
+      volumes:
+        - name: jwt-keys
+          secret:
+            secretName: {{ $.Values.jwt.existingSecret }}
+            items:
+              - key: {{ $.Values.jwt.privateKeyFilename }}
+                path: {{ $.Values.jwt.privateKeyFilename }}
+              - key: {{ $.Values.jwt.publicKeyFilename }}
+                path: {{ $.Values.jwt.publicKeyFilename }}
+      {{- end }}
+---
+{{- end }}

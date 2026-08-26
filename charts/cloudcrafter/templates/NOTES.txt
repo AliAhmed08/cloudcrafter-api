@@ -1,0 +1,25 @@
+CloudCrafter has been deployed as release "{{ .Release.Name }}" in namespace "{{ include "cloudcrafter.namespace" . }}".
+
+Check rollout status:
+  kubectl get pods -l app.kubernetes.io/part-of=cloudcrafter -n {{ include "cloudcrafter.namespace" . }}
+
+{{- if .Values.ingress.enabled }}
+
+Ingress is configured for host: {{ .Values.ingress.host }}
+Make sure that host resolves to your cluster (see README.md "Point cloudcrafter.local
+at Minikube" — on Windows with the docker driver, this is 127.0.0.1 with
+`minikube tunnel` running, NOT `minikube ip`).
+
+  curl http://{{ .Values.ingress.host }}/api/users/health
+  curl http://{{ .Values.ingress.host }}/api/events/health
+  curl http://{{ .Values.ingress.host }}/api/tickets/health
+  curl http://{{ .Values.ingress.host }}/api/notifications/health
+{{- end }}
+
+{{- if (index .Values.services "users").jwtSecretMount }}
+
+The Users service expects a pre-existing Secret named
+"{{ .Values.jwt.existingSecret }}" containing "{{ .Values.jwt.privateKeyFilename }}" and
+"{{ .Values.jwt.publicKeyFilename }}". If you haven't created it yet, the Users pod will
+CrashLoopBackOff — see README.md "Helm Deployment" step 1.
+{{- end }}

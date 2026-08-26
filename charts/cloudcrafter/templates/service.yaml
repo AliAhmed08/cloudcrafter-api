@@ -1,0 +1,20 @@
+{{- range $name, $svc := .Values.services }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cloudcrafter.serviceFullname" (dict "name" $name) }}
+  {{- with (include "cloudcrafter.namespace" $) }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "cloudcrafter.selectorLabels" (dict "name" $name) | nindent 4 }}
+    {{- include "cloudcrafter.labels" $ | nindent 4 }}
+spec:
+  selector:
+    {{- include "cloudcrafter.selectorLabels" (dict "name" $name) | nindent 4 }}
+  ports:
+    - port: {{ $svc.servicePort }}
+      targetPort: {{ $svc.containerPort }}
+  type: ClusterIP
+---
+{{- end }}

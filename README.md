@@ -193,3 +193,146 @@ explicitly: `./localstack/deploy-lambda.sh http://<ip>:30080`.
 Per the phased implementation plan: no database, no message broker (Kafka/RabbitMQ), no
 Terraform, no Helm, no Argo CD, no Prometheus/Loki/Grafana, no JWT key rotation, no
 multi-cloud namespaces. These are later tasks.
+
+# Helm Deployment
+
+Task 2A packages the Task 1 deployment as a Helm chart under `charts/cloudcrafter/`. This
+does not replace the raw manifests in `k8s/` — see "Relationship between `k8s/` and
+`charts/cloudcrafter/`" below.
+
+**Prerequisites:** everything from Task 1 (Minikube running, service images built and loaded
+into Minikube — see steps 1 and 4 above) plus Helm 3 installed locally.
+
+## 1. Create the JWT Secret (same as Task 1 — the chart never creates this for you)
+
+The chart deliberately does not template a Secret containing real key material — it only
+references one that must already exist:
+
+```bash
+mkdir -p services/users/keys
+openssl genrsa -out services/users/keys/private.key 2048
+openssl rsa -in services/users/keys/private.key -pubout -out services/users/keys/public.key
+
+kubectl create secret generic users-jwt-keys \
+  --from-file=private.key=services/users/keys/private.key \
+  --from-file=public.key=services/users/keys/public.key
+```
+
+If you already created this Secret while following the Task 1 instructions above and it's
+still present in your cluster (`kubectl get secret users-jwt-keys`), you can skip this step.
+
+## 2. Check the chart (basic sanity check, no cluster needed)
+
+```bash
+helm show chart ./charts/cloudcrafter
+helm show values ./charts/cloudcrafter
+```
+
+## 3. Lint the chart
+
+```bash
+helm lint ./charts/cloudcrafter
+```
+
+## 4. Render templates (dry, no cluster needed)
+
+```bash
+helm template cloudcrafter ./charts/cloudcrafter
+```
+
+Inspect the output and confirm: all four Deployments render, all Services render (including
+`notifications-external`), the Ingress renders with all four `/api/*` paths, every Deployment
+has `livenessProbe`/`readinessProbe` and `resources`, the Users Deployment references the
+`users-jwt-keys` Secret (not literal key content), and the Tickets Deployment references the
+`tickets-s3-credentials` Secret for its S3 env vars.
+
+## 5. Install the chart
+
+If Minikube's Ingress needs `minikube tunnel` running (Windows + `docker` driver — see
+"Networking" above), make sure that's already running in its own terminal, and that
+`cloudcrafter.local` resolves to `127.0.0.1` in your hosts file, before installing:
+
+```bash
+helm install cloudcrafter ./charts/cloudcrafter
+```
+
+To install into a different namespace (this chart has no hardcoded namespace, so this just
+works):
+
+```bash
+helm install cloudcrafter ./charts/cloudcrafter --namespace cloudcrafter --create-namespace
+```
+
+Optionally, dry-run first:
+
+```bash
+helm install cloudcrafter ./charts/cloudcrafter --dry-run --debug
+```
+
+## 6. Check the release
+
+```bash
+helm list
+helm status cloudcrafter
+kubectl get pods -l app.kubernetes.io/part-of=cloudcrafter
+kubectl get svc -l app.kubernetes.io/part-of=cloudcrafter
+kubectl get ingress
+```
+
+Then verify the same way as Task 1:
+
+```bash
+curl http://cloudcrafter.local/api/users/health
+curl http://cloudcrafter.local/api/events/health
+curl http://cloudcrafter.local/api/tickets/health
+curl http://cloudcrafter.local/api/notifications/health
+```
+
+## 7. Uninstall the release
+
+```bash
+helm uninstall cloudcrafter
+```
+
+This removes everything the chart created (Deployments, Services, Ingress, the
+`tickets-s3-credentials` Secret). It does **not** remove the `users-jwt-keys` Secret, since
+the chart never created that Secret in the first place — delete it separately if you want it
+gone: `kubectl delete secret users-jwt-keys`.
+
+## Configuring the chart
+
+Everything in `charts/cloudcrafter/values.yaml` is overridable via `-f` or `--set`, for
+example, to point at a different image registry without touching any template:
+
+```bash
+helm install cloudcrafter ./charts/cloudcrafter \
+  --set services.users.image.repository=ghcr.io/aliahmed08/cloudcrafter-users \
+  --set services.users.image.tag=1.1.0
+```
+
+Never put real secrets (real AWS credentials, real JWT keys) into a committed values file —
+see the comments directly in `values.yaml`'s `s3:` and `jwt:` sections for exactly which
+values are safe defaults (LocalStack's public dummy credentials) versus which must always
+come from a Secret you create out-of-band.
+
+## Helm versioning
+
+`charts/cloudcrafter/Chart.yaml` currently pins `version: 0.1.0` (the chart's own
+template/structure version) and `appVersion: "1.0.0"` (the application version, driven by the
+image tags in `values.yaml`). For now, both are bumped manually and only when something
+actually changes — not on every edit. Once CI/CD is implemented (a later Task 2 step), the
+plan is for the pipeline to bump `Chart.yaml`'s `version` automatically on merges that touch
+`charts/cloudcrafter/`, and to set `appVersion` (and the default image tags) to match the
+semantically-versioned image tag being published — so a Helm chart version becomes a
+reliable pointer to an exact, reproducible set of image tags. That automation is out of scope
+for this step.
+
+## Relationship between `k8s/` and `charts/cloudcrafter/`
+
+- **`k8s/`** — the Task 1 raw Kubernetes manifest baseline. Kept as-is, deployable directly
+  with `kubectl apply -f k8s/`. This is the reference implementation the Helm chart is
+  templated from, and stays useful for quickly diffing "what does the chart actually render"
+  against "what did Task 1 originally specify."
+- **`charts/cloudcrafter/`** — the packaged, reusable, versioned deployment mechanism.
+  Prefer this going forward: it's what future Task 2 steps (CI/CD image tag injection, Argo
+  CD, multi-environment `aws`/`google-cloud` namespaces) will build on top of.

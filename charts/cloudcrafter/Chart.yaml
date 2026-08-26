@@ -1,0 +1,23 @@
+apiVersion: v2
+name: cloudcrafter
+description: >-
+  CloudCrafter API — a single parent Helm chart deploying all four
+  microservices (Users, Events, Tickets, Notifications), Ingress, and the
+  Task 1 event-driven Tickets->S3 configuration as one release.
+type: application
+
+# Chart version: bumped whenever the TEMPLATES/structure of this chart change
+# (independent of the application's own versioning). App version: tracks the
+# version of the CloudCrafter application itself, driven by the image tags in
+# values.yaml. See "Helm Versioning" in README.md's Helm Deployment section
+# for how this will be automated by CI in the next Task 2 step (Task 2B).
+version: 0.1.0
+appVersion: "1.0.0"
+
+keywords:
+  - cloudcrafter
+  - capstone
+  - microservices
+home: https://github.com/AliAhmed08/cloudcrafter-api
+sources:
+  - https://github.com/AliAhmed08/cloudcrafter-api

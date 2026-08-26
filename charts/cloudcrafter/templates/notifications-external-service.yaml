@@ -1,0 +1,26 @@
+{{- if .Values.notificationsExternal.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: notifications-external
+  {{- with (include "cloudcrafter.namespace" .) }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "cloudcrafter.selectorLabels" (dict "name" "notifications") | nindent 4 }}
+    {{- include "cloudcrafter.labels" . | nindent 4 }}
+  annotations:
+    cloudcrafter.io/purpose: >-
+      NodePort so LocalStack's Lambda (running outside the cluster, via
+      docker-compose) can reach Notifications. See README.md "Networking"
+      section. Not used for in-cluster traffic — that goes through the
+      regular ClusterIP Service.
+spec:
+  selector:
+    {{- include "cloudcrafter.selectorLabels" (dict "name" "notifications") | nindent 4 }}
+  ports:
+    - port: {{ (index .Values.services "notifications").servicePort }}
+      targetPort: {{ (index .Values.services "notifications").containerPort }}
+      nodePort: {{ .Values.notificationsExternal.nodePort }}
+  type: NodePort
+{{- end }}

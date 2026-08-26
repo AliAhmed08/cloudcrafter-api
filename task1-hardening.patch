@@ -16,10 +16,10 @@ index 43c50eb..c42cb0d 100644
 +*.pem
 diff --git a/README.md b/README.md
 new file mode 100644
-index 0000000..b5359d2
+index 0000000..87d7a03
 --- /dev/null
 +++ b/README.md
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,272 @@
 +# CloudCrafter API — Capstone
 +
 +Four independent Express microservices (Users, Events, Tickets, Notifications) deployed to
@@ -151,6 +151,14 @@ index 0000000..b5359d2
 +  -d '{"eventId": 1, "userId": 1}'
 +```
 +
++**Reliability note:** when `S3_ENDPOINT` is configured (the default in-cluster setup — see
++`k8s/tickets-deployment.yaml`), a successful S3 upload is *required* for ticket creation to
++succeed. If LocalStack is unreachable or the upload otherwise fails, this call returns `502`
++and no ticket is created — by design, so "ticket created" always means "the event chain was
++triggered," which is what the capstone demonstration needs to be deterministic. (Running
++Tickets without `S3_ENDPOINT` set at all — e.g. quick local API testing without LocalStack —
++is a separate, explicit opt-out and still returns `201` with `s3.uploaded: false`.)
++
 +## 10. Verify the notification was created automatically
 +
 +```bash
@@ -174,22 +182,89 @@ index 0000000..b5359d2
 +## Networking: LocalStack ↔ Kubernetes
 +
 +LocalStack runs as a plain Docker container (via `docker compose`), **outside** Minikube.
-+Two different directions of traffic need two different addressing schemes:
++Two different directions of traffic need two different addressing schemes, and neither
++should ever rely on plain `localhost` — `localhost` inside a pod means the pod, `localhost`
++inside the LocalStack container means the LocalStack container, and `localhost` on the
++Windows host means the Windows host. None of those three are the same machine.
 +
-+- **Tickets (inside Minikube) → LocalStack S3 (on the host):** uses
-+  `http://host.minikube.internal:4566` (Minikube's built-in DNS name for reaching the host
-+  machine from inside a pod). Configured via the `S3_ENDPOINT` env var in
-+  `k8s/tickets-deployment.yaml`.
-+- **Lambda (inside the LocalStack container, on the host's Docker) → Notifications (inside
-+  Minikube):** `host.minikube.internal` does **not** resolve in this direction. Instead,
-+  `localstack/deploy-lambda.sh` configures the Lambda's `NOTIFICATIONS_URL` to
-+  `http://<minikube ip>:30080`, hitting the `notifications-external` NodePort Service
-+  (`k8s/notifications-external-service.yaml`) added specifically for this purpose. The
-+  original `notifications` ClusterIP Service and the Ingress routing are untouched.
++**Driver assumption:** this setup is verified against Minikube's `docker` driver, which is
++the default when running `minikube start` on Windows with Docker Desktop's WSL2 backend
++(check with `minikube profile list`, or look for `"Driver": "docker"` in
++`minikube profile list -o json`). If you're on a different driver (`hyperv`, `virtualbox`),
++use the fallback at the bottom of this section instead of the NodePort approach — the
++addresses below are not guaranteed to be reachable from a sibling Docker container on those
++drivers.
 +
-+This is the one supported local setup for Task 1. If your Minikube driver changes the host
-+machine's reachability (e.g., some VM-based drivers), re-run `minikube ip` and pass it
-+explicitly: `./localstack/deploy-lambda.sh http://<ip>:30080`.
++### Direction 1: Tickets pod (inside Minikube) → LocalStack S3 (on the host)
++
++Uses `http://host.minikube.internal:4566` — Minikube's built-in DNS name for reaching the
++host machine from inside a pod. This is set via the `S3_ENDPOINT` env var in
++`k8s/tickets-deployment.yaml`. On the `docker` driver over Docker Desktop, this resolves
++correctly for Windows and macOS (Docker Desktop provides the underlying `host.docker.internal`
++mapping that Minikube's `host.minikube.internal` is built on). It is **not** guaranteed on
++plain Linux with the `docker` driver and no Docker Desktop — not relevant for a Windows +
++WSL2 + Docker Desktop setup, but worth knowing if you ever move this to a Linux CI runner.
++
++**Verify this direction directly**, before trusting it through the app:
++
++```bash
++kubectl run netcheck --rm -it --image=curlimages/curl --restart=Never -- \
++  curl -sf http://host.minikube.internal:4566/_localstack/health
++```
++
++If that hangs or fails, LocalStack's port 4566 either isn't published (check
++`docker compose ps` in `localstack/`) or Docker Desktop's WSL2 integration isn't enabled for
++the distro you ran `minikube start` from (check Docker Desktop → Settings → Resources → WSL
++Integration).
++
++### Direction 2: LocalStack Lambda (on the host's Docker) → Notifications (inside Minikube)
++
++`host.minikube.internal` does **not** resolve in this direction — it only helps pods reach
++the host, not the reverse. Instead, `localstack/deploy-lambda.sh` configures the Lambda's
++`NOTIFICATIONS_URL` to `http://<minikube ip>:30080`, hitting the `notifications-external`
++NodePort Service (`k8s/notifications-external-service.yaml`) added specifically for this
++purpose. The original `notifications` ClusterIP Service and the Ingress routing are
++untouched. `deploy-lambda.sh` now runs a **preflight check** — it `curl`s
++`http://<minikube ip>:30080/health` itself before wiring anything, and fails loudly with a
++troubleshooting checklist if that doesn't respond, rather than silently deploying a Lambda
++that will never succeed.
++
++**Verify this direction directly, from the same shell you'll run `docker compose` /
++`deploy-lambda.sh` from** (this matters — see the WSL2 note below):
++
++```bash
++curl -sf http://$(minikube ip):30080/health
++```
++
++**WSL2-specific requirement:** run `minikube start`, `docker compose up`, and
++`deploy-lambda.sh` all from the **same WSL2 distro/terminal**. If you start Minikube from
++WSL2 but then run `docker compose` from Windows PowerShell (or a different WSL2 distro), you
++may be talking to a different Docker context, and `minikube ip` reachability is not
++guaranteed across that boundary. Docker Desktop's WSL2 backend generally shares one Docker
++engine across integrated distros, but mixing shells is the single most common source of
++"it worked from one terminal and not the other" on this stack — keep everything in one shell.
++
++### Fallback: if NodePort reachability fails (VPN, firewall, non-docker driver)
++
++If the Direction 2 preflight check fails and isn't a quick fix (corporate VPN routing,
++`hyperv` driver, etc.), use `kubectl port-forward` plus Docker Desktop's `host.docker.internal`
++instead of `minikube ip` + NodePort — this path only depends on Docker Desktop's host
++bridging, not on Minikube's driver-specific networking:
++
++```bash
++# In a dedicated terminal, left running for the duration of your testing:
++kubectl port-forward svc/notifications 3000:3000
++```
++
++```bash
++# Then point the Lambda at the host via Docker Desktop's host.docker.internal,
++# which every container on Docker Desktop can resolve regardless of Minikube driver:
++./localstack/deploy-lambda.sh http://host.docker.internal:3000
++```
++
++This is more moving parts (an extra terminal to keep open) so it's the fallback, not the
++default — but it's the most portable option if the primary path doesn't work in your specific
++Windows/WSL2/Docker Desktop configuration.
 +
 +## JWT key security
 +
@@ -204,17 +279,114 @@ index 0000000..b5359d2
 +- **Important history note:** the original key pair was committed in the initial commit of
 +  this repository. Removing the files from tracking (`git rm --cached`) stops them from
 +  being copied into future clones' *working tree*, but the old key material still exists in
-+  git history until that history is rewritten (e.g. `git filter-repo`) and force-pushed.
-+  Because that old private key must be treated as compromised, generate a **fresh** key pair
-+  (step 2 above) rather than reusing the one from history, and rotate to it via the Secret in
-+  step 3. Full key-rotation *tooling* (dual-key verification, zero-downtime rotation) is
-+  Task 4 — for Task 1, this is a one-time manual replacement.
++  git history until that history is rewritten and force-pushed. See
++  [`docs/jwt-key-history-cleanup.md`](docs/jwt-key-history-cleanup.md) for the exact,
++  safe procedure (using `git filter-repo`, in a disposable clone). Because that old private
++  key must be treated as compromised regardless of the history rewrite, generate a **fresh**
++  key pair (step 2 above) rather than reusing the one from history, and load it via the
++  Secret in step 3. Full key-rotation *tooling* (dual-key verification, zero-downtime
++  rotation) is Task 4 — for Task 1, this is a one-time manual replacement.
 +
 +## What's intentionally out of scope for Task 1
 +
 +Per the phased implementation plan: no database, no message broker (Kafka/RabbitMQ), no
 +Terraform, no Helm, no Argo CD, no Prometheus/Loki/Grafana, no JWT key rotation, no
 +multi-cloud namespaces. These are later tasks.
+diff --git a/docs/jwt-key-history-cleanup.md b/docs/jwt-key-history-cleanup.md
+new file mode 100644
+index 0000000..2f263c6
+--- /dev/null
++++ b/docs/jwt-key-history-cleanup.md
+@@ -0,0 +1,89 @@
++# Purging compromised JWT keys from Git history
++
++`services/users/private.key` and `services/users/public.key` were committed in this
++repository's initial commit (`56bedd4`). Task 1 already removed them from the current
++working tree (`git rm --cached`) and excluded them from future commits (`.gitignore`,
++`.dockerignore`). That is enough to stop them from being copied into new clones' working
++trees and new Docker images, **but the old key bytes are still recoverable from git history**
++(`git show 56bedd4:services/users/private.key` would still print it) until history itself is
++rewritten. Treat that old private key as permanently compromised — never re-add it, and never
++paste its contents anywhere (chat, docs, commit messages, logs) while doing this cleanup.
++
++## Recommended tool: git-filter-repo
++
++`git filter-repo` is the tool the Git project itself recommends over the older `git
++filter-branch` (which is slow and easy to misuse) and over BFG Repo-Cleaner (great for bulk
++blob removal, but filter-repo is more precise for "delete these exact paths everywhere").
++
++### 1. Install it
++
++```bash
++pip install git-filter-repo
++# or: brew install git-filter-repo   (macOS)
++```
++
++### 2. Work from a **fresh, disposable clone** — never your daily working copy
++
++History rewriting changes every commit hash downstream of the rewritten commit. Do this in a
++throwaway clone so you don't corrupt your working directory mid-task:
++
++```bash
++git clone --no-local /path/to/cloudcrafter-api cloudcrafter-api-history-cleanup
++cd cloudcrafter-api-history-cleanup
++```
++
++### 3. Strip the two files from every commit
++
++```bash
++git filter-repo --path services/users/private.key --path services/users/public.key --invert-paths
++```
++
++This rewrites every commit that ever touched those two paths, removing the blobs entirely —
++not just deleting them in a new commit, but erasing them from history.
++
++### 4. Verify they're actually gone
++
++```bash
++git log --all --oneline -- services/users/private.key services/users/public.key
++# should print nothing
++
++git rev-list --objects --all | grep -i "private.key\|public.key"
++# should print nothing
++```
++
++### 5. Push the rewritten history
++
++`git filter-repo` removes the `origin` remote as a safety measure (to stop an accidental
++push of unrewritten history). Re-add it and force-push:
++
++```bash
++git remote add origin https://github.com/AliAhmed08/cloudcrafter-api.git
++git push origin --force --all
++git push origin --force --tags
++```
++
++### 6. Critical follow-up steps (these matter as much as the rewrite itself)
++
++- **Every other clone/fork is now stale.** Anyone else with a copy of this repo (including
++  your own other local clones) must re-clone fresh, or run `git fetch` + hard-reset — their
++  old local history still has the key in it.
++- **Rotate, don't reuse.** Never re-introduce the historical key pair. Generate a brand-new
++  RS256 pair (Task 1 README, "Generate a local JWT key pair") and load only that into the
++  Kubernetes Secret.
++- **Assume it's already leaked.** Because it was in a public/shared repo, treat any tokens
++  ever signed with that original private key as forgeable and not trustworthy, regardless of
++  whether you rewrite history — history rewriting prevents *future* exposure from this repo,
++  it does not retroactively secure anything that already happened.
++- **GitHub caching**: GitHub itself may cache old commits reachable via PR references, forks,
++  or its own internal object cache for a period after a force-push. For a genuinely
++  compromised secret (as opposed to this training exercise), the correct real-world step is
++  also to contact GitHub Support to request purging of cached views, in addition to the
++  `filter-repo` push.
++
++## Why not just `git rm` + new commit (what Task 1 did)?
++
++That step was necessary but not sufficient — it stops *new* clones' working trees and new
++Docker image builds from containing the key (correct for stopping ongoing exposure via the
++active branch), but does not remove it from history. This document is the follow-up for
++removing it from history entirely. Both steps are part of "safest possible" handling; this
++file intentionally contains no key material itself.
 diff --git a/k8s/events-deployment.yaml b/k8s/events-deployment.yaml
 index cfc7fed..fdecf7d 100644
 --- a/k8s/events-deployment.yaml
@@ -398,10 +570,10 @@ index 84c4354..4bf282f 100644
 +                path: public.key
 diff --git a/localstack/deploy-lambda.sh b/localstack/deploy-lambda.sh
 new file mode 100755
-index 0000000..8ab50e5
+index 0000000..091d0ab
 --- /dev/null
 +++ b/localstack/deploy-lambda.sh
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,131 @@
 +#!/usr/bin/env bash
 +# CloudCrafter Task 1 — packages and deploys the notify-on-receipt Lambda to
 +# LocalStack, then wires an S3 -> Lambda event notification on the
@@ -435,6 +607,50 @@ index 0000000..8ab50e5
 +else
 +  MINIKUBE_IP="$(minikube ip)"
 +  NOTIFICATIONS_URL="http://${MINIKUBE_IP}:30080"
++fi
++
++# Minikube's driver changes what "reachable from a sibling Docker container"
++# even means. host.minikube.internal / minikube-ip reachability from
++# LocalStack (a plain docker-compose container, NOT inside the cluster) is
++# only reliable with the docker driver on top of Docker Desktop (the default
++# and recommended setup for Windows + WSL2 + Docker Desktop). Warn loudly on
++# other drivers instead of silently producing an unreachable URL.
++DRIVER="$(minikube profile list -o json 2>/dev/null | node -pe '
++  try {
++    const data = JSON.parse(require("fs").readFileSync(0, "utf8"));
++    const p = (data.valid || [])[0];
++    p ? p.Config.Driver : "unknown";
++  } catch (e) { "unknown"; }
++' 2>/dev/null || echo "unknown")"
++if [ "$DRIVER" != "docker" ] && [ "$DRIVER" != "unknown" ]; then
++  echo "WARNING: Minikube driver is '$DRIVER', not 'docker'."
++  echo "         The minikube-ip + NodePort networking this script uses is only"
++  echo "         verified against the docker driver (the default for Windows +"
++  echo "         WSL2 + Docker Desktop). See README.md 'Networking' section for"
++  echo "         the fallback (kubectl port-forward + host.docker.internal) if"
++  echo "         the preflight check below fails."
++fi
++
++echo "==> Preflight: checking Notifications is reachable at $NOTIFICATIONS_URL"
++if curl -sf --max-time 5 "$NOTIFICATIONS_URL/health" >/dev/null; then
++  echo "    OK — Notifications /health responded."
++else
++  echo "ERROR: Could not reach $NOTIFICATIONS_URL/health from this machine."
++  echo "  This means the Lambda (which runs in the same Docker networking"
++  echo "  context as this script) will not be able to reach Notifications either."
++  echo "  Checklist:"
++  echo "    1. Is the notifications-external Service applied?"
++  echo "       kubectl get svc notifications-external"
++  echo "    2. Is the notifications pod Running and Ready?"
++  echo "       kubectl get pods -l app=notifications"
++  echo "    3. Does 'curl $NOTIFICATIONS_URL/health' work from a plain terminal"
++  echo "       on this machine right now?"
++  echo "    4. If using WSL2: run this script FROM THE SAME WSL2 distro that"
++  echo "       runs 'minikube start', not from Windows PowerShell/cmd directly."
++  echo "    5. See README.md 'Networking: LocalStack <-> Kubernetes' for the"
++  echo "       kubectl port-forward fallback if NodePort reachability is blocked"
++  echo "       (e.g. by a VPN or corporate firewall)."
++  exit 1
 +fi
 +
 +echo "==> Installing Lambda dependencies"
@@ -794,7 +1010,7 @@ index db93171..d8bf854 100644
    }
  }
 diff --git a/services/tickets/server.js b/services/tickets/server.js
-index c6dfb55..f9e9c3d 100644
+index c6dfb55..10cbfac 100644
 --- a/services/tickets/server.js
 +++ b/services/tickets/server.js
 @@ -1,4 +1,5 @@
@@ -803,7 +1019,7 @@ index c6dfb55..f9e9c3d 100644
  const app = express();
  app.use(express.json());
  
-@@ -8,13 +9,52 @@ const PORT = process.env.PORT || 3000;
+@@ -8,13 +9,62 @@ const PORT = process.env.PORT || 3000;
  let TICKETS = [];
  let nextId = 1;
  
@@ -826,13 +1042,9 @@ index c6dfb55..f9e9c3d 100644
 +    })
 +  : null;
 +
-+// Uploads the receipt JSON to S3. This is what triggers the Lambda ->
-+// Notifications event chain — Tickets never calls Notifications directly.
++// Uploads the receipt JSON to S3. Only called when `s3` is configured
++// (S3_ENDPOINT set) — see the S3_ENDPOINT opt-out handling in POST /tickets.
 +async function uploadReceiptToS3(ticket) {
-+  if (!s3) {
-+    console.warn("S3_ENDPOINT not set — skipping receipt upload (event flow disabled).");
-+    return { uploaded: false };
-+  }
 +  const key = `receipts/${ticket.receiptId}.json`;
 +  await s3.send(
 +    new PutObjectCommand({
@@ -852,30 +1064,51 @@ index c6dfb55..f9e9c3d 100644
 -// Books a ticket for an event and returns a receipt.
 -// The receipt payload is what Task 1 Part B (serverless notification) simulates uploading to S3.
 -app.post("/tickets", (req, res) => {
-+// Books a ticket for an event, returns a receipt, and uploads the receipt to
-+// S3. The S3 upload is what drives the rest of the event chain
++// Books a ticket for an event, uploads its receipt to S3, and returns it.
++// The S3 upload is what drives the rest of the event chain
 +// (S3 -> Lambda -> Notifications) — Tickets does not call Notifications directly.
++//
++// Reliability: when S3_ENDPOINT is configured (the normal Task 1 in-cluster
++// setup — see k8s/tickets-deployment.yaml), a successful receipt upload is
++// REQUIRED for a ticket to be considered created. This is deterministic on
++// purpose: the whole point of Task 1 is proving that ticket creation always
++// produces a notification via the event chain, so "ticket created but the
++// event that was supposed to follow silently didn't happen" is treated as a
++// failure, not a partial success. If the upload fails, the ticket is not
++// added to the in-memory store and the request returns 502.
++//
++// When S3_ENDPOINT is NOT set at all, this is an explicit opt-out for local,
++// non-LocalStack development (e.g. quickly poking at the Tickets API without
++// standing up the whole event pipeline) — in that mode only, ticket creation
++// still succeeds and reports s3.uploaded=false.
 +app.post("/tickets", async (req, res) => {
    const { eventId, userId } = req.body || {};
    if (!eventId || !userId) {
      return res.status(400).json({ error: "eventId and userId are required" });
-@@ -27,7 +67,19 @@ app.post("/tickets", (req, res) => {
+@@ -26,8 +76,26 @@ app.post("/tickets", (req, res) => {
+     issuedAt: new Date().toISOString(),
      receiptId: `receipt-${Date.now()}`
    };
-   TICKETS.push(ticket);
--  res.status(201).json(ticket);
 +
-+  let s3Result = { uploaded: false };
++  if (!s3) {
++    console.warn("S3_ENDPOINT not set — creating ticket without the event flow (local dev opt-out).");
++    TICKETS.push(ticket);
++    return res.status(201).json({ ...ticket, s3: { uploaded: false, reason: "S3_ENDPOINT not configured" } });
++  }
++
++  let s3Result;
 +  try {
 +    s3Result = await uploadReceiptToS3(ticket);
 +  } catch (err) {
-+    // Ticket creation itself succeeded; the S3 upload is best-effort so a
-+    // LocalStack outage doesn't block ticket booking. Surface the failure
-+    // in the response so it's visible during testing.
-+    console.error("Failed to upload receipt to S3:", err.message);
-+    s3Result = { uploaded: false, error: err.message };
++    console.error("Failed to upload receipt to S3 — ticket NOT created:", err.message);
++    return res.status(502).json({
++      error: "Failed to upload ticket receipt to S3; ticket was not created.",
++      details: err.message
++    });
 +  }
 +
+   TICKETS.push(ticket);
+-  res.status(201).json(ticket);
 +  res.status(201).json({ ...ticket, s3: s3Result });
  });
  
@@ -946,10 +1179,10 @@ index 8fa1f96..5d66453 100644
  const USERS = [
 diff --git a/test/verify-task1.sh b/test/verify-task1.sh
 new file mode 100755
-index 0000000..9aeec6e
+index 0000000..7b69c2c
 --- /dev/null
 +++ b/test/verify-task1.sh
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,186 @@
 +#!/usr/bin/env bash
 +# CloudCrafter Task 1 — end-to-end verification.
 +#
@@ -959,23 +1192,34 @@ index 0000000..9aeec6e
 +#   3. Ingress routes correctly
 +#   4. /health works for all four services
 +#   5. Users login works
-+#   6. A ticket can be created
++#   6. A ticket can be created (and its receipt upload is REQUIRED to succeed —
++#      see services/tickets/server.js; a 502 here means no ticket exists)
 +#   7. The receipt lands in LocalStack S3
-+#   8. The S3 event triggers the Lambda
-+#   9. The Lambda calls Notifications
++#   8. The S3 event actually triggered the Lambda (checked independently of
++#      the final notification, via the Lambda's own CloudWatch Logs — this is
++#      what proves step 8 happened, as opposed to inferring it from step 10)
++#   9. The Lambda successfully called Notifications (checked via the same
++#      Lambda logs, which record the POST result)
 +#  10. The notification shows up in GET /notifications
++#
++# Every asynchronous step (7, 8/9, 10) is retried with backoff rather than
++# checked once — S3 notification delivery and LocalStack's Lambda executor
++# (especially LAMBDA_EXECUTOR=docker, which has to start a container per
++# invocation) are not instantaneous, especially on a cold start.
 +#
 +# Usage:
 +#   ./test/verify-task1.sh
 +#
 +# Assumes: Minikube is running, Task 1 manifests are applied, Ingress is
 +# enabled, /etc/hosts has "cloudcrafter.local" mapped to `minikube ip`,
-+# and LocalStack + the Lambda are deployed (see README.md).
++# and LocalStack + the Lambda are deployed (see README.md). Run from the same
++# shell/WSL2 distro used for `minikube start` and `docker compose up`.
 +
-+set -euo pipefail
++set -uo pipefail
 +
 +BASE_URL="${BASE_URL:-http://cloudcrafter.local}"
 +S3_BUCKET="${S3_BUCKET:-cloudcrafter-ticket-receipts}"
++LAMBDA_FUNCTION_NAME="${LAMBDA_FUNCTION_NAME:-notify-on-receipt}"
 +PASS=0
 +FAIL=0
 +
@@ -991,9 +1235,30 @@ index 0000000..9aeec6e
 +  fi
 +}
 +
++# Retries a command up to $2 times, waiting $3 seconds between attempts,
++# until it succeeds (exit 0) or attempts are exhausted. Prints progress so a
++# slow LocalStack Lambda cold start doesn't look like the script is stuck.
++retry_until() {
++  local description="$1"
++  local attempts="$2"
++  local delay="$3"
++  shift 3
++  local i
++  for i in $(seq 1 "$attempts"); do
++    if "$@" >/tmp/verify-task1-retry-output 2>&1; then
++      return 0
++    fi
++    echo "    ...($description) attempt $i/$attempts not ready yet, waiting ${delay}s"
++    sleep "$delay"
++  done
++  echo "    Last output from '$description':"
++  sed 's/^/    | /' /tmp/verify-task1-retry-output
++  return 1
++}
++
 +echo "== 1. Kubernetes pods Running =="
 +kubectl get pods -o wide
-+NOT_RUNNING=$(kubectl get pods --no-headers | grep -v -c "Running" || true)
++NOT_RUNNING=$(kubectl get pods --no-headers 2>/dev/null | grep -v -c "Running" || true)
 +check "All pods Running" "$([ "$NOT_RUNNING" = "0" ] && echo 0 || echo 1)"
 +
 +echo
@@ -1012,6 +1277,15 @@ index 0000000..9aeec6e
 +done
 +
 +echo
++echo "== Precondition: Lambda function is deployed =="
++awslocal lambda get-function --function-name "$LAMBDA_FUNCTION_NAME" >/dev/null 2>&1
++LAMBDA_EXISTS=$?
++check "Lambda function '$LAMBDA_FUNCTION_NAME' exists in LocalStack" "$LAMBDA_EXISTS"
++if [ "$LAMBDA_EXISTS" != "0" ]; then
++  echo "  Run ./localstack/deploy-lambda.sh before this script — see README.md."
++fi
++
++echo
 +echo "== 5. Users login =="
 +LOGIN_RESPONSE=$(curl -s -X POST "$BASE_URL/api/users/login" \
 +  -H "Content-Type: application/json" \
@@ -1020,34 +1294,74 @@ index 0000000..9aeec6e
 +check "Login returned a token" "$([ -n "$TOKEN" ] && [ "$TOKEN" != "undefined" ] && echo 0 || echo 1)"
 +
 +echo
-+echo "== 6. Create a ticket (triggers S3 upload) =="
-+TICKET_RESPONSE=$(curl -s -X POST "$BASE_URL/api/tickets/tickets" \
++echo "== 6. Create a ticket (receipt upload to S3 is REQUIRED to succeed) =="
++TICKET_HTTP_CODE=$(curl -s -o /tmp/verify-task1-ticket-response -w "%{http_code}" \
++  -X POST "$BASE_URL/api/tickets/tickets" \
 +  -H "Content-Type: application/json" \
 +  -d '{"eventId":1,"userId":1}')
-+echo "  Response: $TICKET_RESPONSE"
++TICKET_RESPONSE=$(cat /tmp/verify-task1-ticket-response)
++echo "  HTTP $TICKET_HTTP_CODE — Response: $TICKET_RESPONSE"
++check "POST /tickets returned 201 (ticket + upload both succeeded)" "$([ "$TICKET_HTTP_CODE" = "201" ] && echo 0 || echo 1)"
++
 +RECEIPT_ID=$(echo "$TICKET_RESPONSE" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).receiptId' 2>/dev/null || echo "")
 +UPLOADED=$(echo "$TICKET_RESPONSE" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).s3.uploaded' 2>/dev/null || echo "false")
-+check "Ticket created with a receiptId" "$([ -n "$RECEIPT_ID" ] && [ "$RECEIPT_ID" != "undefined" ] && echo 0 || echo 1)"
-+check "Ticket response confirms S3 upload succeeded" "$([ "$UPLOADED" = "true" ] && echo 0 || echo 1)"
++check "Ticket response includes a receiptId" "$([ -n "$RECEIPT_ID" ] && [ "$RECEIPT_ID" != "undefined" ] && echo 0 || echo 1)"
++check "Ticket response confirms S3 upload succeeded (s3.uploaded=true)" "$([ "$UPLOADED" = "true" ] && echo 0 || echo 1)"
++
++if [ -z "$RECEIPT_ID" ] || [ "$RECEIPT_ID" = "undefined" ]; then
++  echo
++  echo "  No receiptId obtained — skipping steps 7-10 (nothing to trace through the chain)."
++  echo "======================================"
++  echo " Task 1 verification: $PASS passed, $FAIL failed"
++  echo "======================================"
++  exit 1
++fi
 +
 +echo
-+echo "== 7. Receipt exists in LocalStack S3 =="
-+S3_LIST=$(awslocal s3api list-objects-v2 --bucket "$S3_BUCKET" --query "Contents[?contains(Key, '$RECEIPT_ID')]" --output text 2>/dev/null || echo "")
-+check "Receipt object found in s3://$S3_BUCKET" "$([ -n "$S3_LIST" ] && echo 0 || echo 1)"
++echo "== 7. Receipt object exists in LocalStack S3 =="
++check_s3_object() {
++  local result
++  result=$(awslocal s3api list-objects-v2 --bucket "$S3_BUCKET" \
++    --query "Contents[?contains(Key, '$RECEIPT_ID')]" --output text 2>&1)
++  echo "$result"
++  [ -n "$result" ]
++}
++retry_until "S3 object for $RECEIPT_ID" 5 2 check_s3_object
++check "Receipt object found in s3://$S3_BUCKET" "$?"
 +
 +echo
-+echo "== 8-10. Waiting for event-driven Lambda -> Notifications flow =="
-+echo "  (no manual Lambda invocation, no manual POST /notify)"
-+FOUND="false"
-+for i in $(seq 1 10); do
-+  NOTIFS=$(curl -s "$BASE_URL/api/notifications/notifications")
-+  if echo "$NOTIFS" | grep -q "$RECEIPT_ID"; then
-+    FOUND="true"
-+    break
-+  fi
-+  sleep 2
-+done
-+check "Notification containing receiptId '$RECEIPT_ID' appeared in GET /notifications" "$([ "$FOUND" = "true" ] && echo 0 || echo 1)"
++echo "== 8. S3 event triggered the Lambda (checked independently, via Lambda logs) =="
++echo "  (no manual 'aws lambda invoke' — this only reads CloudWatch Logs)"
++check_lambda_invoked() {
++  local log_group="/aws/lambda/$LAMBDA_FUNCTION_NAME"
++  local streams
++  streams=$(awslocal logs describe-log-streams --log-group-name "$log_group" \
++    --order-by LastEventTime --descending --max-items 5 \
++    --query 'logStreams[].logStreamName' --output text 2>&1) || return 1
++  for stream in $streams; do
++    if awslocal logs get-log-events --log-group-name "$log_group" --log-stream-name "$stream" \
++        --query 'events[].message' --output text 2>/dev/null | grep -q "$RECEIPT_ID"; then
++      return 0
++    fi
++  done
++  return 1
++}
++retry_until "Lambda invocation log for $RECEIPT_ID" 15 3 check_lambda_invoked
++LAMBDA_TRIGGERED=$?
++check "Lambda execution log references receiptId '$RECEIPT_ID' (S3 event fired it)" "$LAMBDA_TRIGGERED"
++
++echo
++echo "== 9-10. Lambda called Notifications, and the notification is now visible =="
++echo "  (no manual POST /notify — only polling GET /notifications)"
++check_notification_visible() {
++  local notifs
++  notifs=$(curl -s "$BASE_URL/api/notifications/notifications" 2>&1)
++  echo "$notifs" | grep -q "$RECEIPT_ID"
++}
++retry_until "notification for $RECEIPT_ID" 15 3 check_notification_visible
++check "Notification containing receiptId '$RECEIPT_ID' appeared in GET /notifications" "$?"
++
++rm -f /tmp/verify-task1-retry-output /tmp/verify-task1-ticket-response
 +
 +echo
 +echo "======================================"
