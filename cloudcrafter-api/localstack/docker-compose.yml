@@ -1,0 +1,40 @@
+version: "3.8"
+
+# CloudCrafter Task 1 — LocalStack environment.
+# Provides S3 (ticket receipt bucket) and Lambda (event-driven notification trigger).
+#
+# Run from the localstack/ directory:
+#   docker compose up -d
+#
+# LocalStack is started OUTSIDE the Kubernetes cluster (plain Docker), because
+# LocalStack Community does not run well as a Kubernetes workload for local dev.
+# See README.md "Networking: LocalStack <-> Kubernetes" for how Lambda reaches
+# the notifications Service running inside Minikube.
+
+services:
+  localstack:
+    container_name: cloudcrafter-localstack
+    image: localstack/localstack:3.4
+    ports:
+      - "4566:4566" # LocalStack edge port (S3, Lambda, IAM, etc. all multiplexed here)
+    environment:
+      - SERVICES=s3,lambda,iam,sts,logs,cloudwatch
+      - DEBUG=0
+      - LAMBDA_EXECUTOR=docker
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      # Lambda needs to reach the notifications Service inside Minikube.
+      # NOTIFICATIONS_URL is forwarded into the Lambda's own environment at
+      # deploy time by localstack/deploy-lambda.sh — it is NOT read directly
+      # by LocalStack itself, but is documented here for visibility.
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./init:/etc/localstack/init/ready.d"
+      - "localstack-data:/var/lib/localstack"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  localstack-data:

@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notifications
+  labels:
+    app: notifications
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notifications
+  template:
+    metadata:
+      labels:
+        app: notifications
+    spec:
+      containers:
+        - name: notifications
+          image: notifications:1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

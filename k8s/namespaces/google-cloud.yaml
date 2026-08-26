@@ -1,0 +1,9 @@
+# Simulated "google-cloud" environment namespace — see k8s/namespaces/aws.yaml
+# for the full explanation. Same chart, same mechanism, different namespace
+# and values-google-cloud.yaml overlay.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: google-cloud
+  labels:
+    cloudcrafter.io/environment: google-cloud

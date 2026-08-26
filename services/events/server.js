@@ -31,4 +31,9 @@ app.post("/events", (req, res) => {
   res.status(201).json(event);
 });
 
-app.listen(PORT, () => console.log(`Events service listening on port ${PORT}`));
+// Exported for testing (see test/events.test.js). Only binds a real port
+// when this file is run directly, not when required by a test.
+module.exports = app;
+if (require.main === module) {
+  app.listen(PORT, () => console.log(`Events service listening on port ${PORT}`));
+}

@@ -21,7 +21,15 @@ spec:
     spec:
       containers:
         - name: {{ $name }}
-          image: "{{ $svc.image.repository }}:{{ $svc.image.tag }}"
+          {{- $repository := $svc.image.repository }}
+          {{- if $.Values.imageRegistry }}
+          {{- $repository = printf "%s/cloudcrafter-%s" $.Values.imageRegistry $name }}
+          {{- end }}
+          {{- $tag := $svc.image.tag }}
+          {{- if $.Values.imageTag }}
+          {{- $tag = $.Values.imageTag }}
+          {{- end }}
+          image: "{{ $repository }}:{{ $tag }}"
           imagePullPolicy: {{ $.Values.imagePullPolicy }}
           ports:
             - containerPort: {{ $svc.containerPort }}

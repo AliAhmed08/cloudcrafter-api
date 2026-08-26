@@ -1,0 +1,18 @@
+# EXAMPLE ONLY — not applied automatically, and not referenced by any
+# workflow or Argo CD Application in this repository yet.
+#
+# This demonstrates the two values that switch the whole chart from "local
+# Minikube mode" to "GHCR mode" (see values.yaml's imageRegistry/imageTag
+# comments for the full explanation). Copy this file, replace the owner and
+# tag, and pass it with `-f`, or pass the same two values with `--set`:
+#
+#   helm install cloudcrafter ./charts/cloudcrafter \
+#     --set imageRegistry=ghcr.io/aliahmed08 \
+#     --set imageTag=1.0.0
+#
+# An Argo CD Application can achieve the same thing via source.helm.parameters
+# (see argocd/application-aws.yaml for a commented-out example of exactly
+# this, ready to uncomment once real GHCR images exist).
+
+imageRegistry: ghcr.io/aliahmed08
+imageTag: "1.0.0"

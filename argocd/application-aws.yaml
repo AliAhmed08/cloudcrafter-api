@@ -1,0 +1,55 @@
+# Argo CD Application: deploys charts/cloudcrafter into the "aws" namespace.
+#
+# This is the GitOps deployment mechanism — CI (.github/workflows/*.yml)
+# never runs `kubectl apply` or `helm install` against a real cluster. CI
+# only tests, builds, and publishes images/chart changes to Git; Argo CD is
+# what actually reconciles the cluster to match what's in this repository:
+#
+#   Developer -> GitHub -> GitHub Actions (test, build, push to GHCR)
+#                              -> Git (chart/values updates)
+#                                  -> Argo CD (watches Git) -> Kubernetes
+#
+# Apply this to a cluster that has Argo CD installed:
+#   kubectl apply -f argocd/application-aws.yaml
+#
+# No GitHub credentials are needed here because this repository is public;
+# Argo CD reads it the same way `git clone` would with no authentication.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudcrafter-aws
+  namespace: argocd
+  labels:
+    cloudcrafter.io/environment: aws
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/AliAhmed08/cloudcrafter-api.git
+    targetRevision: main
+    path: charts/cloudcrafter
+    helm:
+      valueFiles:
+        - values-aws.yaml
+      # Once GHCR publishing (release.yml) has produced real, versioned
+      # images, point this Application at them by uncommenting and setting
+      # these two parameters — no chart or template change required (see
+      # values.yaml's imageRegistry/imageTag mechanism and
+      # values-ghcr.example.yaml for the equivalent `helm install --set`
+      # form of this same override):
+      # parameters:
+      #   - name: imageRegistry
+      #     value: ghcr.io/aliahmed08
+      #   - name: imageTag
+      #     value: "1.0.0"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: aws
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

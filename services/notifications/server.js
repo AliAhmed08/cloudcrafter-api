@@ -23,4 +23,9 @@ app.post("/notify", (req, res) => {
   res.status(201).json(notification);
 });
 
-app.listen(PORT, () => console.log(`Notifications service listening on port ${PORT}`));
+// Exported for testing (see test/notifications.test.js). Only binds a real
+// port when this file is run directly, not when required by a test.
+module.exports = app;
+if (require.main === module) {
+  app.listen(PORT, () => console.log(`Notifications service listening on port ${PORT}`));
+}

@@ -21,6 +21,29 @@ global:
 imagePullPolicy: IfNotPresent
 
 # ------------------------------------------------------------------------
+# Two deployment modes, driven by these two optional overrides:
+#
+#   Local mode (default, unset): each service uses its own
+#   services.<name>.image.repository/tag below as-is — e.g. "users:1.0" —
+#   exactly what Task 1's `minikube image load` workflow expects. Nothing
+#   below needs to change for local Minikube development.
+#
+#   CI/GHCR mode: set these two values (e.g. via --set at install time, or
+#   an Argo CD Application's helm.parameters — see argocd/), and every
+#   service's image is automatically rewritten to
+#   "<imageRegistry>/cloudcrafter-<service>:<imageTag>" without editing any
+#   per-service value or template. This is what keeps a real registry
+#   owner/org from being hardcoded anywhere in this chart.
+#
+# Example (see README.md "GHCR + Helm integration" for the full walkthrough):
+#   helm install cloudcrafter ./charts/cloudcrafter \
+#     --set imageRegistry=ghcr.io/aliahmed08 \
+#     --set imageTag=1.0.0
+# ------------------------------------------------------------------------
+imageRegistry: ""
+imageTag: ""
+
+# ------------------------------------------------------------------------
 # Ingress — mirrors k8s/ingress.yaml (Task 1 baseline), now templated and
 # configurable. cloudcrafter.local stays the default local-dev host.
 # ------------------------------------------------------------------------

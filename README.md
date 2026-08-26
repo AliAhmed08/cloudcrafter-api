@@ -336,3 +336,275 @@ for this step.
 - **`charts/cloudcrafter/`** — the packaged, reusable, versioned deployment mechanism.
   Prefer this going forward: it's what future Task 2 steps (CI/CD image tag injection, Argo
   CD, multi-environment `aws`/`google-cloud` namespaces) will build on top of.
+
+# Task 2 — Packaging, CI/CD, GitOps & Portability
+
+This section covers everything added on top of Task 1 and the Task 2A Helm chart: automated
+testing/CI, GHCR image publishing, Argo CD GitOps, and simulated multi-cloud portability
+(`aws` / `google-cloud` namespaces, same chart, no cloud-specific hardcoding).
+
+## 1. Repository structure (new in this step)
+
+```
+.github/workflows/
+  ci.yml                    # tests + Dockerfile + Helm validation, on every PR/push to main
+  release.yml                # builds & publishes all 4 images to GHCR
+argocd/
+  application-aws.yaml       # Argo CD Application -> aws namespace
+  application-google-cloud.yaml  # Argo CD Application -> google-cloud namespace
+k8s/namespaces/
+  aws.yaml                   # plain Namespace manifest
+  google-cloud.yaml          # plain Namespace manifest
+charts/cloudcrafter/
+  values-aws.yaml             # minimal env overlay (NOT a full values.yaml copy)
+  values-google-cloud.yaml    # minimal env overlay
+  values-ghcr.example.yaml    # example of switching to GHCR-mode images
+services/*/test/*.test.js     # per-service test suites (see "Testing" below)
+```
+
+Everything from Task 1 (`k8s/`, `localstack/`) and Task 2A (`charts/cloudcrafter/` core
+templates) is unchanged in structure — this step only adds files, plus two small, necessary
+edits: a testability seam in each `server.js` (exporting `app`, guarding `app.listen()` behind
+`require.main === module` — no request-handling logic changed), and the chart's
+`imageRegistry`/`imageTag` override mechanism (see "GHCR + Helm integration" below).
+
+## 2. Testing
+
+Each service now has a real test suite under `services/<name>/test/`, using **only Node's
+built-in `node:test` and `node:assert` modules plus the native `fetch`** (stable since Node
+18) — no test framework dependency was added. Run any service's tests locally:
+
+```bash
+cd services/users && npm install && npm test
+```
+
+Coverage: Users (health, valid/invalid login, protected route with valid/missing/invalid
+JWT — using a throwaway RSA key pair generated in-memory per test run, never committed),
+Events (health, list/get/create, 404 and 400 cases), Tickets (health, ticket creation tested
+via the S3-not-configured opt-out path — no AWS credentials needed in CI — plus the 400 case),
+Notifications (health, `/notify` creating a visible notification, 400 case). All 20 tests
+across the four services were run and pass.
+
+## 3. GitHub Actions CI (`.github/workflows/ci.yml`)
+
+Runs on every pull request and every push to `main`. Three job groups:
+
+- **`test-services`** — matrix over the 4 services × Node 18.x/20.x: `npm install`
+  (no lockfile is committed, so this uses `install` not `ci`), `node --check server.js`,
+  `npm test`.
+- **`docker-build-validate`** — matrix over the 4 services: `docker build` each Dockerfile
+  (validation only, nothing is pushed here — see release.yml for publishing).
+- **`helm-validate`** — `helm lint`, `helm template` with default values, `helm template`
+  with each of the `values-aws.yaml`/`values-google-cloud.yaml` overlays, and a static grep
+  guard that fails the build if any chart *template* contains a hardcoded `namespace: aws` or
+  `namespace: google-cloud` line.
+- **`ci-summary`** — depends on all of the above; gives branch protection one single check
+  name to require instead of enumerating every matrix leg (see "Branch protection" below).
+
+This workflow needs **no cloud credentials, no registry login, and never runs `kubectl` or
+`helm install` against a real cluster** — it only validates.
+
+## 4. GHCR image publishing (`.github/workflows/release.yml`)
+
+Builds and pushes all four images — `ghcr.io/<owner>/cloudcrafter-users`,
+`cloudcrafter-events`, `cloudcrafter-tickets`, `cloudcrafter-notifications` — using
+**only the built-in `GITHUB_TOKEN`** (via `docker/login-action`, no PAT or registry secret
+needs to be created). The owner is derived from `github.repository_owner` (lowercased, since
+GHCR requires lowercase image paths) — your GitHub username is never hardcoded anywhere in
+the workflow.
+
+Triggers: push to `main`, push of a version tag (`v*.*.*`), or manual dispatch.
+
+## 5. Image tagging strategy
+
+Every build is tagged with an **immutable** `sha-<short-commit-sha>` tag — this is the tag
+that should always be trusted for "exactly this code." On top of that:
+
+- Push to `main` also gets a moving `edge` tag (latest main build — for convenience only,
+  never relied on exclusively).
+- Pushing a version tag like `v1.2.3` additionally tags the image `1.2.3`, `1.2`, and
+  `latest`.
+
+This is deliberately **not** "just `latest`" — per the capstone requirement, at least one
+immutable tag (`sha-...`, and `1.2.3` on releases) is always present, so a specific build can
+always be pinned exactly, including by `charts/cloudcrafter/values.yaml`'s `imageTag`.
+
+## 6. Semantic versioning — Helm chart vs. application
+
+`charts/cloudcrafter/Chart.yaml`:
+
+```yaml
+version: 0.2.0        # the CHART's own version — bumped when templates/values structure changes
+appVersion: "1.0.0"   # the APPLICATION's version — tracks what's actually running (image tags)
+```
+
+These are independent on purpose: `version` changed (0.1.0 → 0.2.0 in this step) because the
+chart gained new templating capability (`imageRegistry`/`imageTag` overrides), even though no
+application code changed at all (`appVersion` stayed `1.0.0`). Conversely, a new application
+release (new image tag) wouldn't necessarily require any chart template change. Both are
+currently bumped **manually**, only when something genuinely changes — full CI-automated
+version bumping (e.g. bumping `Chart.yaml` automatically when a PR touching `charts/` merges)
+is a documented future enhancement, not implemented here (see the comment in `Chart.yaml`) —
+being explicit that this isn't built yet rather than implying it is.
+
+## 7. GHCR + Helm integration — two modes
+
+The chart supports two image-sourcing modes without ever hardcoding a registry owner in a
+template:
+
+**Local mode (default — Task 1/2A behavior, completely unchanged):**
+```yaml
+# values.yaml defaults, per service:
+image:
+  repository: users   # etc. per service
+  tag: "1.0"
+```
+Works exactly as before with `minikube image load`.
+
+**CI/GHCR mode** — set two top-level values, and every service's image is rewritten
+automatically to `<imageRegistry>/cloudcrafter-<service>:<imageTag>`:
+```bash
+helm install cloudcrafter ./charts/cloudcrafter \
+  --set imageRegistry=ghcr.io/aliahmed08 \
+  --set imageTag=1.0.0
+```
+See `charts/cloudcrafter/values-ghcr.example.yaml` for the equivalent `-f` form, and the
+commented-out `helm.parameters` block in `argocd/application-aws.yaml` for how Argo CD would
+apply the same override once real GHCR images exist.
+
+## 8. Argo CD (GitOps)
+
+Two Application manifests under `argocd/`, both pointing at this same Git repository and the
+same chart path:
+
+```
+Developer -> GitHub -> GitHub Actions (test, build, push to GHCR)
+                            -> Git (chart/values updates)
+                                -> Argo CD (watches Git) -> Kubernetes
+```
+
+CI **never** deploys directly — it only tests and publishes. Argo CD is the only thing that
+ever reconciles a real cluster, by continuously watching this Git repo. Both Applications set:
+
+```yaml
+syncPolicy:
+  automated:
+    prune: true
+    selfHeal: true
+  syncOptions:
+    - CreateNamespace=true
+```
+
+`prune: true` removes cluster resources that are no longer in Git; `selfHeal: true` reverts
+manual `kubectl edit`-style drift back to what Git says; `CreateNamespace=true` means you
+don't have to `kubectl apply` the namespace manifests separately (though `k8s/namespaces/`
+still exists for anyone applying manifests directly instead of via Argo CD).
+
+Install Argo CD and apply both Applications:
+
+```bash
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+kubectl apply -f argocd/application-aws.yaml
+kubectl apply -f argocd/application-google-cloud.yaml
+```
+
+## 9. AWS namespace simulation
+
+`k8s/namespaces/aws.yaml` creates a plain `aws` Namespace on whatever cluster you apply it to
+— this does not provision anything on real AWS; it's a local stand-in so the *portability* of
+the chart can be demonstrated without needing two real cloud accounts.
+`charts/cloudcrafter/values-aws.yaml` is a **minimal** overlay (not a full `values.yaml` copy)
+— only `ingress.host` and `notificationsExternal.nodePort` differ, and only because both
+simulated environments might be installed on one shared local cluster at once (see the
+comments in that file for exactly why each one is necessary).
+
+## 10. Google Cloud namespace simulation
+
+Identical mechanism — `k8s/namespaces/google-cloud.yaml` and
+`charts/cloudcrafter/values-google-cloud.yaml`, same reasoning, different namespace/host/port.
+
+## 11. How to verify both deployments
+
+```bash
+kubectl apply -f k8s/namespaces/aws.yaml
+kubectl apply -f k8s/namespaces/google-cloud.yaml
+
+helm install cloudcrafter ./charts/cloudcrafter \
+  --namespace aws -f charts/cloudcrafter/values-aws.yaml
+
+helm install cloudcrafter ./charts/cloudcrafter \
+  --namespace google-cloud -f charts/cloudcrafter/values-google-cloud.yaml
+
+kubectl get pods -n aws
+kubectl get pods -n google-cloud
+helm list -A
+```
+
+Or, to prove the templates render correctly for both without installing anything:
+
+```bash
+helm template cloudcrafter ./charts/cloudcrafter -n aws -f charts/cloudcrafter/values-aws.yaml
+helm template cloudcrafter ./charts/cloudcrafter -n google-cloud -f charts/cloudcrafter/values-google-cloud.yaml
+```
+
+Both commands use the exact same chart — the only inputs that differ are `-n` and `-f`.
+
+## 12. Required GitHub repository settings
+
+- **Actions permissions**: Settings → Actions → General → Workflow permissions → ensure
+  "Read and write permissions" is enabled (needed for `release.yml` to push to GHCR using
+  `GITHUB_TOKEN`).
+- **Package visibility**: after the first successful `release.yml` run, go to the repository's
+  Packages tab and confirm the four `cloudcrafter-*` packages exist; set visibility
+  (public/private) as you prefer — private packages will additionally require pull
+  credentials when Kubernetes actually pulls them.
+
+## 13. Branch protection (you must enable this manually — I cannot change GitHub settings from
+    within the repository)
+
+Go to **Settings → Branches → Add branch protection rule** for `main`:
+
+- ✅ Require a pull request before merging
+- ✅ Require status checks to pass before merging, and require these exact checks (their
+  names come directly from `ci.yml`'s job `name:` fields — they'll only appear in the list
+  after `ci.yml` has run at least once on a PR):
+  - `ci-summary` (recommended — one check that only passes if every matrix leg passed)
+  - or, if you'd rather require every leg individually: `test-services (users, node 20.x)`,
+    `test-services (events, node 20.x)`, `test-services (tickets, node 20.x)`,
+    `test-services (notifications, node 20.x)`, `docker-build-validate (users)`, etc., and
+    `helm-validate`
+- ✅ Require branches to be up to date before merging
+
+## 14. Required secrets
+
+**None.** `release.yml` uses only the automatically-provided `secrets.GITHUB_TOKEN` — you do
+not need to create any repository secret for CI/CD as implemented here. If you later point an
+Argo CD Application at a *private* GHCR package, Argo CD's cluster will need an
+`imagePullSecret` — not covered here since all packages are assumed public for this capstone.
+
+## 15. Evidence commands
+
+```bash
+# CI ran and passed (after pushing/opening a PR):
+#   GitHub -> Actions tab -> most recent "CI" run -> all green
+
+# Images published:
+#   GitHub -> repo -> Packages tab -> 4 cloudcrafter-* packages, each with a sha-<commit> tag
+
+# Helm chart is valid:
+helm lint ./charts/cloudcrafter
+helm template cloudcrafter ./charts/cloudcrafter
+
+# Both simulated environments render from the identical chart:
+helm template cloudcrafter ./charts/cloudcrafter -n aws -f charts/cloudcrafter/values-aws.yaml
+helm template cloudcrafter ./charts/cloudcrafter -n google-cloud -f charts/cloudcrafter/values-google-cloud.yaml
+
+# Both are actually running (after `helm install` into each, or after Argo CD syncs):
+kubectl get pods -n aws
+kubectl get pods -n google-cloud
+
+# Argo CD sees both Applications as Synced/Healthy:
+kubectl get applications -n argocd
+```

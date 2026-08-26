@@ -1,0 +1,32 @@
+# Environment-specific overrides for the simulated "aws" namespace/environment.
+# Everything not listed here comes from the chart's default values.yaml —
+# deliberately minimal (Task 2, Step 12): this is NOT a full copy of
+# values.yaml, only the values that must genuinely differ.
+#
+# Why these two values specifically need to differ (not just "for show"):
+#   - ingress.host: if both the "aws" and "google-cloud" releases are
+#     installed on the SAME demo cluster at once (the realistic way to
+#     actually demonstrate this capstone requirement on one Minikube), they
+#     cannot share one Ingress host — each host must resolve to a distinct
+#     backend. Real AWS/GCP deployments would instead differ by real DNS
+#     names; this is the local-simulation equivalent of that same problem.
+#   - notificationsExternal.nodePort: NodePorts must be unique per cluster.
+#     If both releases are installed together, they would collide on the
+#     default 30080 otherwise. (In a REAL multi-cloud setup, each namespace
+#     would typically be a different physical cluster, so this collision
+#     wouldn't exist — it's specifically a consequence of simulating both
+#     "clouds" on one shared local cluster for this capstone.)
+#
+# global.extraLabels is added purely for identification (e.g. useful later
+# for Task 3 observability dashboards grouping by environment) — not a
+# functional requirement.
+
+global:
+  extraLabels:
+    cloudcrafter.io/environment: aws
+
+ingress:
+  host: cloudcrafter-aws.local
+
+notificationsExternal:
+  nodePort: 30080

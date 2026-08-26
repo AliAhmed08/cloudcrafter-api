@@ -1,0 +1,135 @@
+name: CI
+
+# Runs on every pull request and every push to main. Deliberately requires no
+# cloud credentials, no registry login, and never runs `kubectl apply` —
+# this workflow only validates; it never deploys (see release.yml for image
+# publishing, and README.md "Argo CD" for how deployment actually happens).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # ------------------------------------------------------------------------
+  # Runs each service's own test suite (services/*/test/*.test.js, using
+  # Node's built-in test runner — see README.md "Testing" section) plus a
+  # basic syntax check, across the four services and both Node 18/20 (the
+  # versions this capstone targets).
+  # ------------------------------------------------------------------------
+  test-services:
+    name: test-services (${{ matrix.service }}, node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [users, events, tickets, notifications]
+        node-version: ["18.x", "20.x"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install dependencies
+        working-directory: services/${{ matrix.service }}
+        # No package-lock.json is committed (see .gitignore) — `npm ci`
+        # requires one, so this uses `npm install` instead.
+        run: npm install
+
+      - name: Syntax check
+        working-directory: services/${{ matrix.service }}
+        run: node --check server.js
+
+      - name: Run tests
+        working-directory: services/${{ matrix.service }}
+        run: npm test
+
+  # ------------------------------------------------------------------------
+  # Confirms each service's Dockerfile actually builds. This does not push
+  # anywhere — it's a pure buildability check, matching Task 1/2A's
+  # Dockerfiles (node:18-alpine, non-root user, .dockerignore excludes key
+  # material — see services/*/.dockerignore).
+  # ------------------------------------------------------------------------
+  docker-build-validate:
+    name: docker-build-validate (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [users, events, tickets, notifications]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image (validation only, not pushed)
+        run: docker build -t cloudcrafter-${{ matrix.service }}:ci-validate ./services/${{ matrix.service }}
+
+  # ------------------------------------------------------------------------
+  # Validates the Helm chart itself: lint, template rendering with default
+  # values, and template rendering with both simulated cloud environments'
+  # overlay values (see charts/cloudcrafter/values-aws.yaml and
+  # values-google-cloud.yaml) — proving the identical chart renders cleanly
+  # for both without any hardcoded namespace inside the templates.
+  # ------------------------------------------------------------------------
+  helm-validate:
+    name: helm-validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: "v3.15.3"
+
+      - name: helm lint
+        run: helm lint ./charts/cloudcrafter
+
+      - name: helm template (default / local values)
+        run: helm template cloudcrafter ./charts/cloudcrafter
+
+      - name: helm template (aws overlay)
+        run: |
+          helm template cloudcrafter ./charts/cloudcrafter \
+            --namespace aws \
+            -f charts/cloudcrafter/values-aws.yaml
+
+      - name: helm template (google-cloud overlay)
+        run: |
+          helm template cloudcrafter ./charts/cloudcrafter \
+            --namespace google-cloud \
+            -f charts/cloudcrafter/values-google-cloud.yaml
+
+      - name: Verify no hardcoded cloud namespace names inside chart templates
+        # This checks the TEMPLATE SOURCE (charts/cloudcrafter/templates/),
+        # not rendered output — rendered output correctly contains the
+        # target namespace, since that's what --namespace is for. The chart
+        # source itself must never hardcode "aws" or "google-cloud".
+        run: |
+          if grep -rnE '^\s*namespace:\s*(aws|google-cloud)\s*$' charts/cloudcrafter/templates/; then
+            echo "::error::Found a hardcoded cloud namespace inside a chart template. Namespace must always come from .Release.Namespace / cloudcrafter.namespace helper."
+            exit 1
+          fi
+          echo "OK: no hardcoded aws/google-cloud namespace found in chart templates."
+
+  # ------------------------------------------------------------------------
+  # Single required-status-check target, so branch protection can require
+  # just one check name instead of enumerating every matrix leg. See
+  # README.md "Branch protection" for the exact settings to enable.
+  # ------------------------------------------------------------------------
+  ci-summary:
+    name: ci-summary
+    runs-on: ubuntu-latest
+    needs: [test-services, docker-build-validate, helm-validate]
+    if: always()
+    steps:
+      - name: Fail if any required job failed
+        run: |
+          if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ] || \
+             [ "${{ contains(needs.*.result, 'cancelled') }}" = "true" ]; then
+            echo "::error::One or more required CI jobs failed."
+            exit 1
+          fi
+          echo "All CI jobs passed."

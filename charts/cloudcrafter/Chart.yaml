@@ -7,11 +7,21 @@ description: >-
 type: application
 
 # Chart version: bumped whenever the TEMPLATES/structure of this chart change
-# (independent of the application's own versioning). App version: tracks the
-# version of the CloudCrafter application itself, driven by the image tags in
-# values.yaml. See "Helm Versioning" in README.md's Helm Deployment section
-# for how this will be automated by CI in the next Task 2 step (Task 2B).
-version: 0.1.0
+# (independent of the application's own versioning) — e.g. 0.1.0 -> 0.2.0 here
+# for Task 2's imageRegistry/imageTag override mechanism (see values.yaml).
+# App version: tracks the version of the CloudCrafter application itself,
+# driven by the image tags in values.yaml (or by imageTag when set).
+#
+# This distinction matters: the chart's own packaging/templates can change
+# (new values, new resources, refactored templates) independently of
+# whether the application code inside the containers changed at all, and
+# vice versa — a new application release (new appVersion / new image tag)
+# doesn't necessarily require any chart template change.
+#
+# Versioning policy for now: both are bumped manually, only when something
+# actually changes — not on every edit (see README.md "Helm versioning" for
+# the planned CI automation, which is not yet implemented).
+version: 0.2.0
 appVersion: "1.0.0"
 
 keywords:

@@ -1,0 +1,18 @@
+# Simulated "aws" environment namespace for Task 2's multi-cloud
+# portability demonstration. This is a plain Namespace on whatever
+# Kubernetes cluster you apply it to (e.g. your local Minikube) — it does
+# not provision anything on real AWS. The point being demonstrated is that
+# the exact same Helm chart (charts/cloudcrafter/) deploys cleanly into this
+# namespace with no template changes, only the values-aws.yaml overlay
+# (see README.md "Multi-cloud portability").
+#
+# Apply directly with:
+#   kubectl apply -f k8s/namespaces/aws.yaml
+# or let Argo CD create it automatically (argocd/application-aws.yaml sets
+# syncOptions: [CreateNamespace=true]).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aws
+  labels:
+    cloudcrafter.io/environment: aws

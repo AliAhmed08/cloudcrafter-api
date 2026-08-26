@@ -1,0 +1,24 @@
+# Task 1 networking: LocalStack (and its Lambda) run as a plain Docker
+# container OUTSIDE the Kubernetes cluster, so they cannot reach the existing
+# ClusterIP Service (k8s/notifications-service.yaml) — that's only reachable
+# from inside the cluster / via Ingress. This adds a second, NodePort Service
+# purely so the Lambda can reach Notifications from the host, without
+# changing the existing ClusterIP Service or Ingress routing at all.
+#
+# On Minikube, the Lambda (in LocalStack) reaches this via:
+#   http://host.minikube.internal:30080
+# See README.md "Networking: LocalStack <-> Kubernetes" for details.
+apiVersion: v1
+kind: Service
+metadata:
+  name: notifications-external
+  labels:
+    app: notifications
+spec:
+  selector:
+    app: notifications
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30080
+  type: NodePort

@@ -1,0 +1,17 @@
+# Environment-specific overrides for the simulated "google-cloud"
+# namespace/environment. See values-aws.yaml for the full reasoning on why
+# ingress.host and notificationsExternal.nodePort specifically need to
+# differ between the two simulated environments — the short version: both
+# are only required to be unique if both releases are installed on the same
+# shared local cluster at once, which is the practical way to demonstrate
+# this capstone requirement without provisioning two real clusters.
+
+global:
+  extraLabels:
+    cloudcrafter.io/environment: google-cloud
+
+ingress:
+  host: cloudcrafter-google-cloud.local
+
+notificationsExternal:
+  nodePort: 30081

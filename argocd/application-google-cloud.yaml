@@ -1,0 +1,40 @@
+# Argo CD Application: deploys charts/cloudcrafter into the "google-cloud"
+# namespace. Identical mechanism to argocd/application-aws.yaml — same Git
+# repository, same chart path, same GitOps flow — only the destination
+# namespace and the values overlay differ. See application-aws.yaml for the
+# full architecture explanation.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudcrafter-google-cloud
+  namespace: argocd
+  labels:
+    cloudcrafter.io/environment: google-cloud
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/AliAhmed08/cloudcrafter-api.git
+    targetRevision: main
+    path: charts/cloudcrafter
+    helm:
+      valueFiles:
+        - values-google-cloud.yaml
+      # See application-aws.yaml for the equivalent GHCR-mode example —
+      # identical mechanism, uncomment once real GHCR images exist:
+      # parameters:
+      #   - name: imageRegistry
+      #     value: ghcr.io/aliahmed08
+      #   - name: imageTag
+      #     value: "1.0.0"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: google-cloud
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
