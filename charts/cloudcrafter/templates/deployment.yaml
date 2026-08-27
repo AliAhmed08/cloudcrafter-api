@@ -19,6 +19,12 @@ spec:
       labels:
         {{- include "cloudcrafter.selectorLabels" (dict "name" $name) | nindent 8 }}
     spec:
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
       containers:
         - name: {{ $name }}
           {{- $repository := $svc.image.repository }}

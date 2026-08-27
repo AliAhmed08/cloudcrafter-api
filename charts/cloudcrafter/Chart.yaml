@@ -21,7 +21,11 @@ type: application
 # Versioning policy for now: both are bumped manually, only when something
 # actually changes — not on every edit (see README.md "Helm versioning" for
 # the planned CI automation, which is not yet implemented).
-version: 0.2.0
+#
+# 0.2.0 -> 0.3.0 (Task 2B): added the imagePullSecrets mechanism for private
+# GHCR support (see values.yaml). No application code changed, so appVersion
+# stays 1.0.0.
+version: 0.3.0
 appVersion: "1.0.0"
 
 keywords:

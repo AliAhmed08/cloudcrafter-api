@@ -44,6 +44,22 @@ imageRegistry: ""
 imageTag: ""
 
 # ------------------------------------------------------------------------
+# Only needed if your GHCR images are PRIVATE. Public GHCR images (the
+# default for a public GitHub repo unless you explicitly restrict package
+# visibility) need nothing here — leave this empty.
+#
+# If you've made the ghcr.io/<owner>/cloudcrafter-* packages private,
+# Kubernetes needs a docker-registry Secret to pull them. Create it once
+# (see README.md "CI/CD" -> "How Kubernetes pulls the images" for the exact
+# command, using a GitHub Personal Access Token with read:packages scope —
+# never commit that token anywhere), then reference its name here:
+#
+#   imagePullSecrets:
+#     - ghcr-pull-secret
+# ------------------------------------------------------------------------
+imagePullSecrets: []
+
+# ------------------------------------------------------------------------
 # Ingress — mirrors k8s/ingress.yaml (Task 1 baseline), now templated and
 # configurable. cloudcrafter.local stays the default local-dev host.
 # ------------------------------------------------------------------------

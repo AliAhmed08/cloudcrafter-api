@@ -584,6 +584,101 @@ not need to create any repository secret for CI/CD as implemented here. If you l
 Argo CD Application at a *private* GHCR package, Argo CD's cluster will need an
 `imagePullSecret` — not covered here since all packages are assumed public for this capstone.
 
+# CI/CD
+
+This section is the single reference for exactly what the CI/CD pipeline does. It
+cross-references the more detailed explanations above (sections 3-7) rather than repeating
+them, and documents what's new in Task 2B: explicit package.json/Kubernetes-YAML validation,
+an in-image JWT-key-content check, and the `imagePullSecret` mechanism for private GHCR.
+
+## What happens on a pull request
+
+`.github/workflows/ci.yml` runs automatically. Nothing is deployed, nothing is published — it
+only validates:
+
+1. **`test-services`** (matrix: 4 services × Node 18.x/20.x) — validates each `package.json`
+   parses as valid JSON, runs `npm install`, runs `node --check server.js` (syntax), runs
+   `npm test` (see "Testing" above for what's covered).
+2. **`k8s-validate`** — every file under `k8s/` (including `k8s/namespaces/`) is parsed as
+   YAML and checked for the required `apiVersion`/`kind`/`metadata` fields
+   (`.github/scripts/validate-k8s-yaml.py`). This does not need a live cluster or kubeconfig.
+3. **`docker-build-validate`** (matrix: 4 services) — builds each Dockerfile (not pushed).
+   For the `users` service specifically, an additional step runs the just-built image and
+   checks that `/app/private.key`, `/app/public.key`, and `/app/keys/` do **not** exist inside
+   it — a concrete, executed check that JWT key material never ends up baked into the image,
+   not just a claim based on `.dockerignore` existing.
+4. **`helm-validate`** — `helm lint`, `helm template` (default values, plus both the
+   `values-aws.yaml` and `values-google-cloud.yaml` overlays), and a grep-based guard that
+   fails the build if any chart *template* hardcodes `namespace: aws` or
+   `namespace: google-cloud`.
+5. **`ci-summary`** — depends on all of the above; the one check name to require in branch
+   protection (see "Branch protection" above) if you don't want to enumerate every matrix leg.
+
+No job in this workflow requires cloud credentials, a Docker Hub account, or cluster access.
+
+## What happens on a push to `main`
+
+Same `ci.yml` run as above, plus `.github/workflows/release.yml` triggers separately: builds
+and pushes all four images to GHCR (see "GHCR image publishing" above for the full tagging
+breakdown). CI and release are independent workflows — a CI failure on `main` doesn't block
+the release workflow from also running, so branch protection (gating merges on CI passing) is
+what actually prevents broken code from reaching `main` in the first place.
+
+## How Kubernetes pulls the images
+
+**If your GHCR packages are public** (the default unless you've explicitly restricted
+visibility in the repo's Packages tab): nothing extra is needed. `imagePullSecrets` in
+`values.yaml` defaults to `[]`, and Kubernetes pulls public GHCR images with no credentials.
+
+**If your GHCR packages are private**, Kubernetes needs a pull secret:
+
+```bash
+# Create a GitHub PAT (classic) with only the "read:packages" scope at
+# https://github.com/settings/tokens — do NOT use a broader-scoped token,
+# and never commit this token anywhere.
+
+kubectl create secret docker-registry ghcr-pull-secret \
+  --docker-server=ghcr.io \
+  --docker-username=<your-github-username> \
+  --docker-password=<your-PAT-with-read:packages> \
+  --docker-email=<your-email>
+```
+
+Then reference it when installing the chart:
+
+```bash
+helm install cloudcrafter ./charts/cloudcrafter \
+  --set imageRegistry=ghcr.io/aliahmed08 \
+  --set imageTag=1.0.0 \
+  --set imagePullSecrets={ghcr-pull-secret}
+```
+
+This Secret must be created once per namespace/cluster you deploy into — it's cluster state,
+not something this chart or repository ever creates or stores for you.
+
+## Deploying a specific image version with Helm
+
+```bash
+# Deploy exactly the image built from commit abc1234:
+helm upgrade --install cloudcrafter ./charts/cloudcrafter \
+  --set imageRegistry=ghcr.io/aliahmed08 \
+  --set imageTag=sha-abc1234
+
+# Or deploy a tagged release:
+helm upgrade --install cloudcrafter ./charts/cloudcrafter \
+  --set imageRegistry=ghcr.io/aliahmed08 \
+  --set imageTag=1.0.0
+```
+
+Because `imageTag` overrides every service's tag at once (see "GHCR + Helm integration"
+above), a single `--set` is enough to move the whole release to a specific, immutable build.
+
+## Required GitHub repository settings
+
+Same as documented above under "Required GitHub repository settings" — Actions write
+permissions for `GITHUB_TOKEN` (needed by `release.yml`), and reviewing package visibility
+after the first release run.
+
 ## 15. Evidence commands
 
 ```bash
