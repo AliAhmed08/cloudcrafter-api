@@ -17,9 +17,9 @@ see cloudcrafter.serviceFullname for that).
 Per-microservice resource name. Kept as the plain service name (e.g. "users")
 rather than prefixed with the release name, so that:
   - the existing Ingress/Service names Task 1 already relies on
-    (services/*/server.js has no coupling to this, but k8s/*-service.yaml
-    and the Ingress backend names do) stay stable when moving from raw
-    manifests to Helm, and
+    (individual services' server.js files have no coupling to this, but
+    k8s/<name>-service.yaml files and the Ingress backend names do) stay
+    stable when moving from raw manifests to Helm, and
   - other charts/scripts (e.g. localstack/deploy-lambda.sh, which targets
     the notifications-external Service by name) keep working unmodified.
 Takes a dict with "root" (the top-level template context) and "name"
