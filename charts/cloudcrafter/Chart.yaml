@@ -25,8 +25,12 @@ type: application
 # 0.2.0 -> 0.3.0 (Task 2B): added the imagePullSecrets mechanism for private
 # GHCR support (see values.yaml). No application code changed, so appVersion
 # stays 1.0.0.
-version: 0.3.0
-appVersion: "1.0.0"
+# 0.3.0 -> 0.4.0: JWT rotation support (current/previous kid-based keys —
+# see docs/jwt-key-rotation.md) and pod/container securityContext hardening
+# (Phase 9). appVersion bumped to 1.1.0 since server.js's actual JWT
+# verification logic changed (kid-based key lookup), not just chart plumbing.
+version: 0.4.0
+appVersion: "1.1.0"
 
 keywords:
   - cloudcrafter

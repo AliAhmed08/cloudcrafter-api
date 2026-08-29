@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provisioning
+  labels:
+    app: grafana
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: cloudcrafter
+        folder: CloudCrafter
+        type: file
+        options:
+          path: /var/lib/grafana/dashboards

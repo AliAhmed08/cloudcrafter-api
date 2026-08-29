@@ -1,8 +1,15 @@
 const express = require("express");
+const { register, metricsMiddleware } = require("./metrics");
 const app = express();
 app.use(express.json());
+app.use(metricsMiddleware);
 
 const PORT = process.env.PORT || 3000;
+
+app.get("/metrics", async (_req, res) => {
+  res.set("Content-Type", register.contentType);
+  res.end(await register.metrics());
+});
 
 // Demo event store — in-memory, intentionally simple for the capstone starter.
 let EVENTS = [

@@ -19,7 +19,7 @@ at Minikube" — on Windows with the docker driver, this is 127.0.0.1 with
 {{- if (index .Values.services "users").jwtSecretMount }}
 
 The Users service expects a pre-existing Secret named
-"{{ .Values.jwt.existingSecret }}" containing "{{ .Values.jwt.privateKeyFilename }}" and
-"{{ .Values.jwt.publicKeyFilename }}". If you haven't created it yet, the Users pod will
-CrashLoopBackOff — see README.md "Helm Deployment" step 1.
+"{{ .Values.jwt.existingSecret }}" containing "current-private.key", "current-public.key",
+and "current-kid" (see docs/jwt-key-rotation.md). If you haven't created it yet, the Users
+pod will CrashLoopBackOff — see README.md "Helm Deployment" step 1.
 {{- end }}

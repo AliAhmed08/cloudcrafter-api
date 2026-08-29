@@ -25,8 +25,12 @@ spec:
         - name: {{ . }}
         {{- end }}
       {{- end }}
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
       containers:
         - name: {{ $name }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
           {{- $repository := $svc.image.repository }}
           {{- if $.Values.imageRegistry }}
           {{- $repository = printf "%s/cloudcrafter-%s" $.Values.imageRegistry $name }}
@@ -68,12 +72,14 @@ spec:
               value: {{ .value | quote }}
             {{- end }}
           {{- end }}
-          {{- if $svc.jwtSecretMount }}
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if $svc.jwtSecretMount }}
             - name: jwt-keys
               mountPath: {{ $.Values.jwt.mountPath }}
               readOnly: true
-          {{- end }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: {{ $svc.probes.path }}
@@ -92,16 +98,17 @@ spec:
             failureThreshold: {{ $svc.probes.readiness.failureThreshold }}
           resources:
             {{- toYaml $svc.resources | nindent 12 }}
-      {{- if $svc.jwtSecretMount }}
       volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if $svc.jwtSecretMount }}
         - name: jwt-keys
           secret:
             secretName: {{ $.Values.jwt.existingSecret }}
-            items:
-              - key: {{ $.Values.jwt.privateKeyFilename }}
-                path: {{ $.Values.jwt.privateKeyFilename }}
-              - key: {{ $.Values.jwt.publicKeyFilename }}
-                path: {{ $.Values.jwt.publicKeyFilename }}
-      {{- end }}
+            # No `items` restriction: previous-public.key/previous-kid only
+            # exist during an active rotation grace period (see
+            # docs/jwt-key-rotation.md) — pinning specific items would fail
+            # pod startup whenever they're absent, which is the normal state.
+        {{- end }}
 ---
 {{- end }}

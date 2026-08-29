@@ -39,20 +39,23 @@ your own RS256 pair for local use — these files are gitignored and never commi
 
 ```bash
 mkdir -p services/users/keys
-openssl genrsa -out services/users/keys/private.key 2048
-openssl rsa -in services/users/keys/private.key -pubout -out services/users/keys/public.key
+openssl genrsa -out services/users/keys/current-private.key 2048
+openssl rsa -in services/users/keys/current-private.key -pubout -out services/users/keys/current-public.key
+echo -n "key-initial" > services/users/keys/current-kid
 ```
 
 ## 3. Create the Kubernetes Secret for JWT keys
 
 ```bash
 kubectl create secret generic users-jwt-keys \
-  --from-file=private.key=services/users/keys/private.key \
-  --from-file=public.key=services/users/keys/public.key
+  --from-file=current-private.key=services/users/keys/current-private.key \
+  --from-file=current-public.key=services/users/keys/current-public.key \
+  --from-file=current-kid=services/users/keys/current-kid
 ```
 
 This is the **only** place the key material goes — never into a committed YAML file, never
-into logs, never into this README.
+into logs, never into this README. See `docs/jwt-key-rotation.md` for how to rotate this key
+later without downtime.
 
 ## 4. Build the service images inside Minikube
 
@@ -210,12 +213,14 @@ references one that must already exist:
 
 ```bash
 mkdir -p services/users/keys
-openssl genrsa -out services/users/keys/private.key 2048
-openssl rsa -in services/users/keys/private.key -pubout -out services/users/keys/public.key
+openssl genrsa -out services/users/keys/current-private.key 2048
+openssl rsa -in services/users/keys/current-private.key -pubout -out services/users/keys/current-public.key
+echo -n "key-initial" > services/users/keys/current-kid
 
 kubectl create secret generic users-jwt-keys \
-  --from-file=private.key=services/users/keys/private.key \
-  --from-file=public.key=services/users/keys/public.key
+  --from-file=current-private.key=services/users/keys/current-private.key \
+  --from-file=current-public.key=services/users/keys/current-public.key \
+  --from-file=current-kid=services/users/keys/current-kid
 ```
 
 If you already created this Secret while following the Task 1 instructions above and it's

@@ -1,0 +1,97 @@
+# Least-privilege network access for the CloudCrafter namespace (Phase 9).
+#
+# Scope deliberately kept to INGRESS restrictions only — not egress. Egress
+# restriction would need to account for Tickets calling out to LocalStack
+# running outside the cluster (see README.md "Networking"), which varies by
+# Minikube driver/host setup; getting that wrong would silently break the
+# Task 1 event flow in ways that are hard to diagnose. Ingress-only is the
+# practical, safe subset for this capstone — see README.md "Security" for
+# this tradeoff being called out explicitly rather than left implicit.
+#
+# Requires a CNI that enforces NetworkPolicy (Minikube's default CNI does
+# NOT enforce these — see README.md "Security" for how to verify/enable
+# this, e.g. `minikube start --cni=calico`).
+
+# 1. Default-deny all ingress traffic to every pod in the namespace, unless
+#    a more specific NetworkPolicy below explicitly allows it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# 2. Allow the Ingress controller to reach each of the four services on
+#    their app port. Assumes the standard `ingress-nginx` namespace/label
+#    from `minikube addons enable ingress` — adjust the namespaceSelector if
+#    your Ingress controller uses different labels.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-services
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [users, events, tickets, notifications]
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000
+---
+# 3. Allow Prometheus (see observability/prometheus/) to scrape each
+#    service's /metrics endpoint. Separate from rule 2 since Prometheus
+#    runs as a regular pod in the same namespace, not behind the Ingress
+#    controller's namespace selector.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [users, events, tickets, notifications]
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 3000
+---
+# 4. Allow the LocalStack Lambda (reaching in via the notifications-external
+#    NodePort Service — see README.md "Networking") to reach Notifications.
+#    NodePort traffic arrives via kube-proxy from outside the pod network,
+#    which NetworkPolicy cannot distinguish from other traffic by source pod
+#    — so this rule allows all ingress to the notifications pod on its app
+#    port as a practical necessity for the NodePort path to keep working,
+#    while the other three services remain restricted to Ingress+Prometheus
+#    only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-notifications-external
+spec:
+  podSelector:
+    matchLabels:
+      app: notifications
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 3000

@@ -60,6 +60,28 @@ imageTag: ""
 imagePullSecrets: []
 
 # ------------------------------------------------------------------------
+# Security hardening (Phase 9). Applied to every service identically —
+# none of the four services need root, extra Linux capabilities, or a
+# writable root filesystem at runtime (all four are stateless Express apps;
+# any scratch space they might need is covered by the /tmp emptyDir mounted
+# on every container). node:18-alpine's default "node" user (uid 1000) is
+# already what the Dockerfiles run as (see services/*/Dockerfile) — this
+# just makes Kubernetes enforce the same thing independently of the image.
+# ------------------------------------------------------------------------
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# ------------------------------------------------------------------------
 # Ingress — mirrors k8s/ingress.yaml (Task 1 baseline), now templated and
 # configurable. cloudcrafter.local stays the default local-dev host.
 # ------------------------------------------------------------------------
@@ -77,8 +99,12 @@ ingress:
 # ------------------------------------------------------------------------
 jwt:
   existingSecret: users-jwt-keys
-  privateKeyFilename: private.key
-  publicKeyFilename: public.key
+  # The Secret must contain: current-private.key, current-public.key,
+  # current-kid (always required), and optionally previous-public.key,
+  # previous-kid (only present during an active rotation's grace period —
+  # see docs/jwt-key-rotation.md). The chart mounts the whole Secret rather
+  # than pinning individual filenames, since the optional previous-* files
+  # may or may not exist depending on rotation state.
   mountPath: /etc/cloudcrafter/jwt
 
 # ------------------------------------------------------------------------

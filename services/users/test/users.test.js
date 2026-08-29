@@ -28,8 +28,9 @@ before(() => {
     publicKeyEncoding: { type: "spki", format: "pem" },
     privateKeyEncoding: { type: "pkcs8", format: "pem" },
   });
-  fs.writeFileSync(path.join(tmpKeysDir, "private.key"), privateKey);
-  fs.writeFileSync(path.join(tmpKeysDir, "public.key"), publicKey);
+  fs.writeFileSync(path.join(tmpKeysDir, "current-private.key"), privateKey);
+  fs.writeFileSync(path.join(tmpKeysDir, "current-public.key"), publicKey);
+  fs.writeFileSync(path.join(tmpKeysDir, "current-kid"), "test-key");
 
   // Must be set BEFORE requiring server.js, since it reads keys at module load.
   process.env.JWT_KEYS_DIR = tmpKeysDir;

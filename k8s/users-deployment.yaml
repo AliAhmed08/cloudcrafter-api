@@ -14,8 +14,19 @@ spec:
       labels:
         app: users
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: users
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           image: users:1.0
           imagePullPolicy: IfNotPresent
           ports:
@@ -24,6 +35,8 @@ spec:
             - name: JWT_KEYS_DIR
               value: "/etc/cloudcrafter/jwt"
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
             - name: jwt-keys
               mountPath: /etc/cloudcrafter/jwt
               readOnly: true
@@ -51,11 +64,15 @@ spec:
               cpu: 200m
               memory: 128Mi
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: jwt-keys
           secret:
             secretName: users-jwt-keys
-            items:
-              - key: private.key
-                path: private.key
-              - key: public.key
-                path: public.key
+            # No `items` restriction on purpose: previous-public.key /
+            # previous-kid only exist in the Secret during an active
+            # rotation's grace period (see docs/jwt-key-rotation.md). If we
+            # pinned specific `items`, referencing a key that isn't present
+            # yet would fail the whole pod at startup. Mounting the whole
+            # Secret means whatever keys currently exist just appear as
+            # files — server.js treats the previous-* files as optional.

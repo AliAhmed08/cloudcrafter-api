@@ -1,7 +1,14 @@
 const express = require("express");
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const { register, metricsMiddleware } = require("./metrics");
 const app = express();
 app.use(express.json());
+app.use(metricsMiddleware);
+
+app.get("/metrics", async (_req, res) => {
+  res.set("Content-Type", register.contentType);
+  res.end(await register.metrics());
+});
 
 const PORT = process.env.PORT || 3000;
 
