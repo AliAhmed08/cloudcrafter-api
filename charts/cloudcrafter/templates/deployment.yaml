@@ -80,22 +80,7 @@ spec:
               mountPath: {{ $.Values.jwt.mountPath }}
               readOnly: true
             {{- end }}
-          livenessProbe:
-            httpGet:
-              path: {{ $svc.probes.path }}
-              port: {{ $svc.containerPort }}
-            initialDelaySeconds: {{ $svc.probes.liveness.initialDelaySeconds }}
-            periodSeconds: {{ $svc.probes.liveness.periodSeconds }}
-            timeoutSeconds: {{ $svc.probes.liveness.timeoutSeconds }}
-            failureThreshold: {{ $svc.probes.liveness.failureThreshold }}
-          readinessProbe:
-            httpGet:
-              path: {{ $svc.probes.path }}
-              port: {{ $svc.containerPort }}
-            initialDelaySeconds: {{ $svc.probes.readiness.initialDelaySeconds }}
-            periodSeconds: {{ $svc.probes.readiness.periodSeconds }}
-            timeoutSeconds: {{ $svc.probes.readiness.timeoutSeconds }}
-            failureThreshold: {{ $svc.probes.readiness.failureThreshold }}
+
           resources:
             {{- toYaml $svc.resources | nindent 12 }}
       volumes:
