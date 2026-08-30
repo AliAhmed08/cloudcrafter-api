@@ -43,6 +43,12 @@ spec:
             limits:
               cpu: 200m
               memory: 256Mi
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            periodSeconds: 5
+            failureThreshold: 60
           readinessProbe:
             httpGet:
               path: /api/health
