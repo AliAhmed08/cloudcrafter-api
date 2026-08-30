@@ -89,10 +89,13 @@ confirmed `/metrics` returns genuine Prometheus-format output including
 `/events/:id`, not raw high-cardinality paths).
 
 `observability/prometheus/` (scrape config + Deployment), `observability/grafana/` (Deployment
-+ provisioned datasource + a real 4-panel dashboard with working PromQL — request rate, error
-rate, p95 latency, total requests), `observability/loki/` (Loki + Promtail DaemonSet for log
++ provisioned Prometheus AND Loki datasources + a 5-panel dashboard combining metrics and
+logs — request rate, error rate, p95 latency, total requests, plus a live logs panel querying
+Loki across all four services), `observability/loki/` (Loki + Promtail DaemonSet for log
 collection). **Verified:** all manifests structurally valid YAML; the dashboard JSON is valid
-JSON with 4 real panels. **Requires your machine:**
+JSON with 5 real panels (4 metrics + 1 logs), each with an explicit datasource reference
+(`prometheus-datasource` / `loki-datasource` UIDs) matching the provisioned datasource
+ConfigMap. **Requires your machine:**
 
 ```bash
 kubectl apply -f observability/prometheus/
